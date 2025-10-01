@@ -33,7 +33,18 @@ body {
   font-size: 1.2rem;
 }
 
+.navbar a {
+  color: inherit;
+  text-decoration: none;
+}
+
 .navbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.navbar-links {
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -199,6 +210,19 @@ body {
   gap: 0.5rem;
 }
 
+.transcode-controls {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.transcode-controls select {
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(30, 41, 59, 0.8);
+  color: inherit;
+}
+
 .status {
   text-transform: capitalize;
   font-weight: 600;
@@ -290,6 +314,30 @@ body {
 
 .toast-info {
   border-left: 4px solid #38bdf8;
+}
+
+.admin-dashboard {
+  background: rgba(15, 23, 42, 0.85);
+  padding: 2rem;
+  border-radius: 1rem;
+  box-shadow: 0 32px 70px rgba(15, 23, 42, 0.45);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1.5rem;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  text-align: left;
+}
+
+.admin-table tbody tr:hover {
+  background: rgba(30, 41, 59, 0.6);
 }
 
 @media (max-width: 768px) {
