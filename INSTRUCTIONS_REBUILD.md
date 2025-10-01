@@ -19,7 +19,7 @@ The target architecture is a stateless, containerized web service deployed on a 
 
 The final monorepo should have the following directory structure.
 
-/cab432-a2-video-app/  
+/tranceVapp/  
 |  
 ├── /terraform/              \# All Terraform (.tf) files for infrastructure  
 |  
