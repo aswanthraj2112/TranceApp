@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "80:80"
+    restart: always
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8080:8080"
+    restart: always
+    environment:
+      - AWS_REGION=ap-southeast-2
+      - AWS_ACCESS_KEY_ID=YOUR_LOCAL_KEY
+      - AWS_SECRET_ACCESS_KEY=YOUR_LOCAL_SECRET
+      - S3_BUCKET=n11817143-a2
+      - DYNAMO_TABLE=n11817143-VideoApp
+      - ELASTICACHE_ENDPOINT=n11817143-a2-cache.km2jzi.cfg.apse2.cache.amazonaws.com:11211
+      - COGNITO_USER_POOL_ID=ap-southeast-2_CdVnmKfrW
+      - DYNAMO_PARTITION_KEY=qut-username
+      - DYNAMO_SORT_KEY=id
+      - MAX_UPLOAD_SIZE_MB=512
+      - PRESIGNED_URL_TTL=600
+      - DOMAIN_NAME=n11817143-trancevapp.cab432.com
