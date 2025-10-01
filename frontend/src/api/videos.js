@@ -1,4 +1,4 @@
-const RAW_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4001';
+const RAW_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
 
 function trimTrailingSlashes(value) {
   if (!value) return '';
@@ -36,8 +36,12 @@ function buildRequestUrl(path = '') {
   return new URL(sanitizedPath, `${API_BASE_URL}/`).toString();
 }
 
-async function request(path, { method = 'GET', body, headers = {} } = {}) {
+async function request(path, { method = 'GET', body, headers = {}, token } = {}) {
   const options = { method, headers: { ...headers } };
+
+  if (token) {
+    options.headers.Authorization = `Bearer ${token}`;
+  }
 
   if (body instanceof FormData) {
     options.body = body;
@@ -59,40 +63,77 @@ async function request(path, { method = 'GET', body, headers = {} } = {}) {
   return payload;
 }
 
-function resolveMediaUrl(relativePath) {
-  if (!relativePath) return '';
-  try {
-    const maybeUrl = new URL(relativePath);
-    return maybeUrl.toString();
-  } catch {
-    return new URL(relativePath.startsWith('/') ? relativePath : `/${relativePath}`, `${API_BASE_URL}/`).toString();
+async function uploadFileToUrl(uploadUrl, file) {
+  const headers = {
+    'Content-Type': file.type || 'application/octet-stream'
+  };
+
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers,
+    body: file
+  });
+
+  if (!response.ok) {
+    throw new Error('Upload to storage failed');
   }
 }
 
 export const videosAPI = {
-  uploadVideo: async (file, ownerId) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    if (ownerId) {
-      formData.append('ownerId', ownerId);
+  initiateUpload: (token, { filename, contentType }) =>
+    request('/api/videos/initiate-upload', {
+      method: 'POST',
+      token,
+      body: { filename, contentType }
+    }),
+
+  finalizeUpload: (token, { videoId, sizeBytes, durationSec }) =>
+    request('/api/videos/finalize-upload', {
+      method: 'POST',
+      token,
+      body: { videoId, sizeBytes, durationSec }
+    }),
+
+  uploadVideo: async (token, file) => {
+    if (!file) {
+      throw new Error('No file selected');
     }
 
-    return request('/api/videos/upload', { method: 'POST', body: formData });
-  },
-
-  listVideos: (page = 1, limit = 10, ownerId) => {
-    const params = new URLSearchParams({
-      page: String(page),
-      limit: String(limit)
+    const { videoId, uploadUrl } = await videosAPI.initiateUpload(token, {
+      filename: file.name,
+      contentType: file.type
     });
-    if (ownerId) {
-      params.set('ownerId', ownerId);
-    }
-    return request(`/api/videos?${params.toString()}`);
+
+    await uploadFileToUrl(uploadUrl, file);
+
+    await videosAPI.finalizeUpload(token, {
+      videoId,
+      sizeBytes: file.size,
+      durationSec: null
+    });
+
+    return videoId;
   },
 
-  resolveStreamUrl: (video) => resolveMediaUrl(video?.streamPath),
-  resolveThumbnailUrl: (video) => resolveMediaUrl(video?.thumbPath)
+  listVideos: async (token) => {
+    const response = await request('/api/videos', { token });
+    return response.items || [];
+  },
+
+  requestTranscode: (token, videoId, preset) =>
+    request(`/api/videos/${videoId}/transcode`, {
+      method: 'POST',
+      token,
+      body: { preset }
+    }),
+
+  getDownloadUrl: (token, videoId) =>
+    request(`/api/videos/${videoId}/download-url`, { token }),
+
+  getStatus: (token, videoId) =>
+    request(`/api/videos/${videoId}/status`, { token }),
+
+  resolveThumbnailUrl: (video) => video?.thumbnailUrl || null
 };
 
 export default videosAPI;
