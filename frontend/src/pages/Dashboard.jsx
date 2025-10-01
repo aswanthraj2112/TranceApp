@@ -1,60 +1,90 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { videosAPI } from '../api/videos.js';
 import { useToast } from '../App.jsx';
 import Uploader from '../components/Uploader.jsx';
 import VideoList from '../components/VideoList.jsx';
 import VideoPlayer from '../components/VideoPlayer.jsx';
 
-function Dashboard({ user }) {
+function Dashboard({ user, token, groups }) {
   const notify = useToast();
   const [videos, setVideos] = useState([]);
-  const [page, setPage] = useState(1);
-  const [limit] = useState(6);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState(null);
-  const [refreshIndex, setRefreshIndex] = useState(0);
+  const [pollingVideoId, setPollingVideoId] = useState(null);
+  const pollingRef = useRef(null);
+
+  const presets = useMemo(() => {
+    if (Array.isArray(groups) && groups.includes('premium-users')) {
+      return ['480p', '720p', '1080p'];
+    }
+    return ['480p', '720p'];
+  }, [groups]);
+
+  const loadVideos = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const items = await videosAPI.listVideos(token);
+      setVideos(items);
+    } catch (error) {
+      notify(error.message || 'Unable to load videos', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, notify]);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+    loadVideos();
+  }, [loadVideos]);
 
-    videosAPI
-      .listVideos(page, limit, user?.id)
-      .then((data) => {
-        if (!cancelled) {
-          setVideos(data.items);
-          setTotal(data.total);
+  useEffect(() => {
+    if (!pollingVideoId) return;
+
+    const poll = async () => {
+      try {
+        const status = await videosAPI.getStatus(token, pollingVideoId);
+        setVideos((current) =>
+          current.map((item) =>
+            item.videoId === pollingVideoId ? { ...item, status: status.status } : item
+          )
+        );
+        if (status.status && status.status.startsWith('READY')) {
+          notify('Transcoding complete!', 'success');
+          setPollingVideoId(null);
+          loadVideos();
         }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          notify(error.message, 'error');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
+      } catch (error) {
+        console.error('Status polling failed', error);
+        notify('Unable to poll status.', 'error');
+        setPollingVideoId(null);
+      }
+    };
+
+    pollingRef.current = window.setInterval(poll, 5000);
+    poll();
 
     return () => {
-      cancelled = true;
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
     };
-  }, [page, limit, notify, refreshIndex, user?.id]);
-
-  const triggerRefresh = () => setRefreshIndex((value) => value + 1);
+  }, [pollingVideoId, token, notify, loadVideos]);
 
   const handleUpload = async (file) => {
+    if (!token) return;
     setUploading(true);
     try {
-      await videosAPI.uploadVideo(file, user?.id);
+      const videoId = await videosAPI.uploadVideo(token, file);
       notify(`Uploaded ${file.name}`, 'success');
-      setPage(1);
-      triggerRefresh();
+      setSelectedVideo(null);
+      setPollingVideoId(null);
+      await loadVideos();
+      return videoId;
     } catch (error) {
-      notify(error.message, 'error');
+      notify(error.message || 'Upload failed', 'error');
+      return null;
     } finally {
       setUploading(false);
     }
@@ -64,17 +94,29 @@ function Dashboard({ user }) {
     setSelectedVideo(video);
   };
 
-  const handleTranscode = () => {
-    notify('Transcoding is not available in local mode.', 'info');
+  const handleTranscode = async (video, preset) => {
+    if (!token) return;
+    try {
+      await videosAPI.requestTranscode(token, video.videoId, preset);
+      notify(`Transcoding ${video.originalName} to ${preset}`, 'info');
+      setPollingVideoId(video.videoId);
+      setVideos((current) =>
+        current.map((item) =>
+          item.videoId === video.videoId ? { ...item, status: `TRANSCODING-${preset}` } : item
+        )
+      );
+    } catch (error) {
+      notify(error.message || 'Failed to start transcoding', 'error');
+    }
   };
 
-  const handleDelete = (video) => {
-    if (!window.confirm(`Delete ${video.originalName}? This cannot be undone.`)) {
-      return;
-    }
-    notify('Delete is not implemented in this demo.', 'info');
-    if (selectedVideo?.id === video.id) {
-      setSelectedVideo(null);
+  const handleDownload = async (video) => {
+    if (!token) return;
+    try {
+      const { downloadUrl } = await videosAPI.getDownloadUrl(token, video.videoId);
+      window.open(downloadUrl, '_blank');
+    } catch (error) {
+      notify(error.message || 'Unable to get download link', 'error');
     }
   };
 
@@ -88,16 +130,17 @@ function Dashboard({ user }) {
       <VideoList
         videos={videos}
         loading={loading}
-        page={page}
-        limit={limit}
-        total={total}
+        transcodePresets={presets}
         onSelect={handleSelect}
         onTranscode={handleTranscode}
-        onDelete={handleDelete}
-        onPageChange={setPage}
+        onDownload={handleDownload}
       />
       {selectedVideo && (
-        <VideoPlayer video={selectedVideo} onClose={() => setSelectedVideo(null)} />
+        <VideoPlayer
+          video={selectedVideo}
+          token={token}
+          onClose={() => setSelectedVideo(null)}
+        />
       )}
     </div>
   );

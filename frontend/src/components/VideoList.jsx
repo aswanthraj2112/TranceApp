@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { videosAPI } from '../api/videos.js';
 
 const formatBytes = (bytes) => {
@@ -9,93 +9,107 @@ const formatBytes = (bytes) => {
   return `${value.toFixed(exponent === 0 ? 0 : 1)} ${units[exponent]}`;
 };
 
-const formatDuration = (seconds) => {
-  if (!seconds && seconds !== 0) return 'Unknown';
-  const total = Math.floor(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const parts = [m.toString().padStart(2, '0'), s.toString().padStart(2, '0')];
-  if (h > 0) {
-    parts.unshift(h.toString());
-  }
-  return parts.join(':');
-};
-
 function VideoList({
   videos,
   loading,
-  page,
-  limit,
-  total,
+  transcodePresets = [],
   onSelect,
   onTranscode,
-  onDelete,
-  onPageChange
+  onDownload
 }) {
-  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const [selectedPresets, setSelectedPresets] = useState({});
 
-  const goToPage = (newPage) => {
-    if (newPage >= 1 && newPage <= totalPages) {
-      onPageChange(newPage);
-    }
+  useEffect(() => {
+    setSelectedPresets({});
+  }, [videos, transcodePresets]);
+
+  const handlePresetChange = (videoId, preset) => {
+    setSelectedPresets((current) => ({ ...current, [videoId]: preset }));
   };
+
+  const resolvePreset = (videoId) =>
+    selectedPresets[videoId] || transcodePresets[0] || '720p';
+
+  if (loading) {
+    return (
+      <section className="video-list">
+        <p>Loading videos…</p>
+      </section>
+    );
+  }
+
+  if (!videos || videos.length === 0) {
+    return (
+      <section className="video-list">
+        <p>No uploads yet. Drop a file above to get started!</p>
+      </section>
+    );
+  }
 
   return (
     <section className="video-list">
       <header className="section-header">
         <h2>Your videos</h2>
-        <div className="pagination">
-          <button type="button" className="btn" onClick={() => goToPage(page - 1)} disabled={page <= 1}>
-            Previous
-          </button>
-          <span>
-            Page {page} / {totalPages}
-          </span>
-          <button type="button" className="btn" onClick={() => goToPage(page + 1)} disabled={page >= totalPages}>
-            Next
-          </button>
-        </div>
       </header>
-
-      {loading ? (
-        <p>Loading videos…</p>
-      ) : videos.length === 0 ? (
-        <p>No uploads yet. Drop a file above to get started!</p>
-      ) : (
-        <ul className="video-grid">
-          {videos.map((video) => (
-            <li key={video.id} className="video-card">
-              <div className="thumb-wrapper">
-                <img
-                  src={videosAPI.resolveThumbnailUrl(video) || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIwIiBoZWlnaHQ9IjkwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMjAiIGhlaWdodD0iOTAiIGZpbGw9IiNFMEUwRTAiIHJ4PSIxMiIvPjx0ZXh0IHg9IjYwIiB5PSI0OCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjE0IiBmaWxsPSIjOTk5Ij5ObyBUaHVtYjwvdGV4dD48L3N2Zz4='}
-                  alt={`${video.originalName} thumbnail`}
-                />
-              </div>
-              <div className="video-info">
-                <h3 title={video.originalName}>{video.originalName}</h3>
-                <p>Duration: {formatDuration(video.durationSec)}</p>
-                <p>
-                  Status: <span className={`status status-${video.status}`}>{video.status}</span>
-                </p>
-                <p>Size: {formatBytes(video.sizeBytes)}</p>
-                <p>Uploaded: {new Date(video.createdAt).toLocaleString()}</p>
-              </div>
-              <div className="video-actions">
-                <button type="button" className="btn" onClick={() => onSelect(video)}>
-                  Play
+      <ul className="video-grid">
+        {videos.map((video) => (
+          <li key={video.videoId} className="video-card">
+            <div className="thumb-wrapper">
+              <img
+                src={
+                  videosAPI.resolveThumbnailUrl(video) ||
+                  'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIwIiBoZWlnaHQ9IjkwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMjAiIGhlaWdodD0iOTAiIGZpbGw9IiNFMEUwRTAiIHJ4PSIxMiIvPjx0ZXh0IHg9IjYwIiB5PSI0OCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsIiBmb250LXNpemU9IjE0IiBmaWxsPSIjOTk5Ij5ObyBUaHVtYjwvdGV4dD48L3N2Zz4='
+                }
+                alt={`${video.originalName} thumbnail`}
+              />
+            </div>
+            <div className="video-info">
+              <h3 title={video.originalName}>{video.originalName}</h3>
+              <p>
+                Status:{' '}
+                <span
+                  className={`status status-${(video.status || 'unknown')
+                    .toLowerCase()
+                    .split('-')[0]}`}
+                >
+                  {video.status || 'UNKNOWN'}
+                </span>
+              </p>
+              <p>Size: {formatBytes(video.sizeBytes)}</p>
+              <p>Uploaded: {new Date(video.createdAt).toLocaleString()}</p>
+            </div>
+            <div className="video-actions">
+              <button type="button" className="btn" onClick={() => onSelect(video)}>
+                Preview
+              </button>
+              <div className="transcode-controls">
+                <label htmlFor={`preset-${video.videoId}`}>Preset</label>
+                <select
+                  id={`preset-${video.videoId}`}
+                  value={resolvePreset(video.videoId)}
+                  onChange={(event) => handlePresetChange(video.videoId, event.target.value)}
+                >
+                  {transcodePresets.map((preset) => (
+                    <option key={preset} value={preset}>
+                      {preset}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => onTranscode(video, resolvePreset(video.videoId))}
+                >
+                  Transcode
                 </button>
-                <button type="button" className="btn" onClick={() => onTranscode(video)}>
-                  Transcode 720p
-                </button>
-                <button type="button" className="btn btn-danger" onClick={() => onDelete(video)}>
-                  Delete
-                </button>
               </div>
-            </li>
-          ))}
-        </ul>
-      )}
+              <button type="button" className="btn" onClick={() => onDownload(video)}>
+                Download
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
