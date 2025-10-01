@@ -1,22 +1,46 @@
 import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { useAuthenticator } from '@aws-amplify/ui-react';
+import { fetchAuthSession } from 'aws-amplify/auth';
 import NavBar from './components/NavBar.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
-import { authAPI } from './api/auth.js';
+import AdminPage from './pages/Admin.jsx';
 import './styles/styles.css';
 
 export const ToastContext = createContext(() => {});
 
 export const useToast = () => React.useContext(ToastContext);
 
-const createGuestUser = () => ({ id: 'guest', username: 'guest' });
+function decodeGroupsFromToken(idToken) {
+  if (!idToken) return [];
+  try {
+    const [, payload] = idToken.split('.');
+    const decoded = JSON.parse(window.atob(payload));
+    const groups = decoded['cognito:groups'];
+    if (Array.isArray(groups)) {
+      return groups;
+    }
+    if (typeof groups === 'string') {
+      return [groups];
+    }
+    return [];
+  } catch (error) {
+    console.warn('Failed to decode token payload', error);
+    return [];
+  }
+}
 
 function App() {
-  const [token, setToken] = useState(() => window.localStorage.getItem('jwt') || '');
-  const [user, setUser] = useState(() => (window.localStorage.getItem('jwt') ? null : createGuestUser()));
-  const [loadingUser, setLoadingUser] = useState(Boolean(token));
   const [toast, setToast] = useState(null);
-  const [cognitoReady, setCognitoReady] = useState(false);
+  const [session, setSession] = useState(null);
+  const [loadingSession, setLoadingSession] = useState(false);
+
+  const { authStatus, user, signOut } = useAuthenticator((context) => [
+    context.authStatus,
+    context.user,
+    context.signOut
+  ]);
 
   const notify = useCallback((message, type = 'info') => {
     setToast({ message, type });
@@ -24,96 +48,117 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const initializeCognito = async () => {
-      try {
-        await authAPI.getConfig();
-        setCognitoReady(true);
-      } catch (error) {
-        console.error('Failed to initialize Cognito:', error);
-        setCognitoReady(false);
-      }
-    };
-
-    setCognitoReady(true);
-    initializeCognito();
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
-    if (!token) {
-      setUser(createGuestUser());
-      setLoadingUser(false);
+    if (authStatus !== 'authenticated') {
+      setSession(null);
+      setLoadingSession(false);
       return () => {
         cancelled = true;
       };
     }
-    setLoadingUser(true);
-    authAPI
-      .getMe(token)
-      .then(({ user: fetched }) => {
+
+    setLoadingSession(true);
+    fetchAuthSession()
+      .then((current) => {
         if (!cancelled) {
-          setUser(fetched);
+          setSession(current);
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        console.error('Failed to fetch auth session', error);
         if (!cancelled) {
-          notify('Session expired. Please log in again.', 'error');
-          setToken('');
-          window.localStorage.removeItem('jwt');
-          setUser(createGuestUser());
+          notify('Unable to load session details.', 'error');
         }
       })
       .finally(() => {
         if (!cancelled) {
-          setLoadingUser(false);
+          setLoadingSession(false);
         }
       });
+
     return () => {
       cancelled = true;
     };
-  }, [token, notify]);
+  }, [authStatus, notify]);
 
-  const handleAuthenticated = (jwt, userData) => {
-    window.localStorage.setItem('jwt', jwt);
-    setToken(jwt);
-    setUser(userData);
-    notify(`Welcome back, ${userData.username}!`, 'success');
-  };
+  const tokens = useMemo(() => {
+    if (!session?.tokens) {
+      return {};
+    }
+    return {
+      idToken: session.tokens.idToken?.toString(),
+      accessToken: session.tokens.accessToken?.toString()
+    };
+  }, [session]);
 
-  const handleLogout = () => {
-    window.localStorage.removeItem('jwt');
-    setToken('');
-    setUser(createGuestUser());
-    notify('Logged out', 'info');
+  const groups = useMemo(() => decodeGroupsFromToken(tokens.idToken), [tokens.idToken]);
+
+  const userProfile = useMemo(() => {
+    if (!user) return null;
+    return {
+      username: user.username || user?.signInDetails?.loginId || 'user',
+      email: user?.signInDetails?.loginId || user?.attributes?.email || null
+    };
+  }, [user]);
+
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      notify('Logged out', 'info');
+    } catch (error) {
+      console.error('Failed to sign out', error);
+      notify('Sign out failed. Try again.', 'error');
+    }
   };
 
   const toastValue = useMemo(() => notify, [notify]);
-  const isGuest = user?.id === 'guest';
+  const isAdmin = groups.includes('admin-users');
 
   return (
     <ToastContext.Provider value={toastValue}>
-      <div className="app">
-        <NavBar user={user} onLogout={handleLogout} />
-        <main className="container">
-          {!cognitoReady ? (
-            <div className="auth-card">
-              <h2>Initializing...</h2>
-              <p>Setting up authentication service...</p>
+      <BrowserRouter>
+        <div className="app">
+          <NavBar
+            user={userProfile}
+            groups={groups}
+            authStatus={authStatus}
+            onLogout={handleLogout}
+          />
+          <main className="container">
+            {authStatus !== 'authenticated' ? (
+              <Login loading={loadingSession} />
+            ) : (
+              <Routes>
+                <Route
+                  path="/"
+                  element={
+                    <Dashboard
+                      user={userProfile}
+                      token={tokens.idToken}
+                      accessToken={tokens.accessToken}
+                      groups={groups}
+                    />
+                  }
+                />
+                <Route
+                  path="/admin"
+                  element={isAdmin ? (
+                    <AdminPage token={tokens.idToken} />
+                  ) : (
+                    <Navigate to="/" replace />
+                  )}
+                />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            )}
+          </main>
+          {toast && (
+            <div className={`toast toast-${toast.type}`}>
+              {toast.message}
             </div>
-          ) : user && !isGuest && token ? (
-            <Dashboard user={user} />
-          ) : user ? (
-            <Dashboard user={user} />
-          ) : (
-            <Login onAuthenticated={handleAuthenticated} loading={loadingUser} />
           )}
-        </main>
-        {toast && (
-          <div className={`toast toast-${toast.type}`}>
-            {toast.message}
-          </div>
-        )}
-      </div>
+        </div>
+      </BrowserRouter>
     </ToastContext.Provider>
   );
 }
